@@ -25,18 +25,17 @@ import { initializeApp }            from 'https://www.gstatic.com/firebasejs/10.
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
          createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
          signOut, updateProfile }   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, collection,
+import { getFirestore, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, collection,
          addDoc, updateDoc, serverTimestamp, query, orderBy }
                                     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCjyPfCjKvSVFUp8dyF0bjbXwuDIukGu2c",
-  authDomain: "tournoi-foot-inter-entreprises.firebaseapp.com",
-  projectId: "tournoi-foot-inter-entreprises",
-  storageBucket: "tournoi-foot-inter-entreprises.firebasestorage.app",
-  messagingSenderId: "995068678625",
-  appId: "1:995068678625:web:cbe198e586f4e928f802a0",
-  measurementId: "G-D6ZFZR3XJN"
+  apiKey: "AIzaSyAa-It1GI_9KTAvQKzkLWNANv91QnZar04",
+  authDomain: "tournoi-foot-entreprises.firebaseapp.com",
+  projectId: "tournoi-foot-entreprises",
+  storageBucket: "tournoi-foot-entreprises.firebasestorage.app",
+  messagingSenderId: "894506578702",
+  appId: "1:894506578702:web:0000000000000000000000"
 };
 // ⚠️ Remplacez les valeurs ci-dessus par celles de VOTRE projet Firebase
 // (créez un nouveau projet Firebase dédié à ce tournoi de foot, distinct du pickleball)
@@ -165,8 +164,12 @@ async function getUserRole(uid){
   try {
     const snap = await getDoc(doc(db,'users',uid));
     if(snap.exists()) return snap.data().role || 'spectator';
-  } catch(e){}
-  return 'spectator';
+    return 'spectator'; // doc inexistant = nouvel utilisateur, rôle par défaut
+  } catch(e){
+    console.error('getUserRole: échec de lecture du profil — rôle dégradé en spectateur par sécurité.', e);
+    showAuthMsg('⚠️ Impossible de vérifier vos droits (problème réseau ou permissions). Reconnectez-vous.', 'red');
+    return 'spectator';
+  }
 }
 async function ensureUserDoc(user){
   const ref = doc(db,'users',user.uid);
@@ -649,6 +652,8 @@ function applyRoleUI(){
   if(hdrName) hdrName.textContent = name + ' · ' + roleBadge(USER_ROLE);
   const lBtn = document.getElementById('logoutBtn');
   if(lBtn) lBtn.textContent = CURRENT_USER ? 'Déconnexion' : 'Quitter';
+  const refreshBtn = document.getElementById('refreshRoleBtn');
+  if(refreshBtn) refreshBtn.style.display = CURRENT_USER ? '' : 'none';
   const isSpec = USER_ROLE === 'spectator';
   const specNav = document.getElementById('specNav');
   if(specNav) specNav.classList.toggle('visible', isSpec);
@@ -787,6 +792,81 @@ function updateLiveToggleBtn(){
   btn.style.borderColor = ST.liveOpen ? 'var(--grn)' : 'var(--red)';
 }
 
+// ══════════════════════════════════════════════════════════
+// GESTION DU STAFF — changer les rôles (admin / scorer / spectator)
+// ══════════════════════════════════════════════════════════
+window.toggleUsersPanel = function(){
+  if(!isAdmin()) return;
+  const p=document.getElementById('usersPanel');
+  if(!p) return;
+  const show = p.style.display==='none';
+  p.style.display = show ? '' : 'none';
+  if(show) loadUsersList();
+};
+
+window.loadUsersList = async function(){
+  if(!isAdmin()) return;
+  const el=document.getElementById('usersList');
+  if(el) el.innerHTML='<div class="info info-b" style="font-size:12px">Chargement…</div>';
+  try {
+    const snap = await getDocs(collection(db,'users'));
+    const users=[];
+    snap.forEach(d=>users.push({ id:d.id, ...d.data() }));
+    users.sort((a,b)=>(a.email||'').localeCompare(b.email||''));
+    renderUsersList(users);
+  } catch(e){
+    console.error('loadUsersList', e);
+    if(el) el.innerHTML=`<div class="info info-r" style="font-size:12px">Erreur de chargement : ${e.message}<br>Vérifiez que les règles Firestore autorisent la lecture de la collection 'users' pour un admin.</div>`;
+  }
+};
+
+function renderUsersList(users){
+  const el=document.getElementById('usersList'); if(!el) return;
+  if(!users.length){ el.innerHTML='<div class="info info-y" style="font-size:12px">Aucun compte enregistré pour le moment (les comptes apparaissent ici après leur 1ère connexion).</div>'; return; }
+  const roleColor = r => r==='admin' ? 'var(--red)' : r==='scorer' ? 'var(--blu)' : 'var(--muted)';
+  el.innerHTML = users.map(u=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--bdr);font-size:13px;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <div style="font-weight:700;color:var(--ink)">${u.name||u.email||u.id}</div>
+        <div style="font-size:11px;color:var(--muted)">${u.email||'—'}</div>
+      </div>
+      <span style="font-size:11px;font-weight:700;color:${roleColor(u.role)};text-transform:uppercase;letter-spacing:.5px;min-width:90px">${u.role||'spectator'}</span>
+      <select onchange="changeUserRole('${u.id}', this.value)" style="width:auto;min-width:140px" title="Changer le rôle de ${u.email||u.id}">
+        <option value="spectator" ${u.role==='spectator'||!u.role?'selected':''}>👁 Spectateur</option>
+        <option value="scorer" ${u.role==='scorer'?'selected':''}>✏️ Scorer (saisie scores)</option>
+        <option value="admin" ${u.role==='admin'?'selected':''}>👑 Admin</option>
+      </select>
+    </div>`).join('');
+}
+
+window.changeUserRole = async function(userId, newRole){
+  if(!isAdmin()) return;
+  try {
+    await updateDoc(doc(db,'users',userId), { role: newRole });
+    loadUsersList();
+  } catch(e){
+    console.error('changeUserRole', e);
+    alert('Erreur lors du changement de rôle : '+e.message);
+  }
+};
+
+// Permet à un utilisateur déjà connecté de rafraîchir son propre rôle
+// sans avoir à se déconnecter/reconnecter (utile juste après qu'un admin
+// l'ait promu scorer/admin).
+window.refreshMyRole = async function(){
+  if(!CURRENT_USER) return;
+  const oldRole = USER_ROLE;
+  const newRole = await getUserRole(CURRENT_USER.uid);
+  if(newRole !== oldRole){
+    USER_ROLE = newRole;
+    applyRoleUI();
+    refreshCurrentPage();
+    alert(`✓ Rôle mis à jour : ${roleBadge(USER_ROLE)}`);
+  } else {
+    alert('Aucun changement de rôle détecté pour votre compte.');
+  }
+};
+
 // ── Menu mobile (hamburger) ──────────────────────────────
 window.toggleMobileMenu = function(){
   const btn=document.getElementById('menuHamburger');
@@ -803,7 +883,7 @@ window.closeMobileMenu = function(){
   document.getElementById('menuOverlay').classList.remove('open');
 };
 function syncDrawerButtons(){
-  [['liveBtn','drawerLiveBtn'],['adminBtn','drawerAdminBtn'],['backBtn','drawerBackBtn'],['fwdBtn','drawerFwdBtn'],['logoutBtn','drawerLogoutBtn']].forEach(([deskId,drawId])=>{
+  [['liveBtn','drawerLiveBtn'],['adminBtn','drawerAdminBtn'],['backBtn','drawerBackBtn'],['fwdBtn','drawerFwdBtn'],['refreshRoleBtn','drawerRefreshRoleBtn'],['logoutBtn','drawerLogoutBtn']].forEach(([deskId,drawId])=>{
     const desk=document.getElementById(deskId); const draw=document.getElementById(drawId);
     if(desk&&draw) draw.style.display=desk.style.display==='none'?'none':'';
   });
@@ -1711,6 +1791,7 @@ input[type=checkbox]{ width:auto;margin-right:6px; }
     <button class="hdr-btn" id="adminBtn" data-role="admin" onclick="toggleAdminPanel()" style="display:none">👑 Admin</button>
     <button class="hdr-btn" id="backBtn" style="display:none" onclick="goBack()">← Retour</button>
     <button class="hdr-btn" id="fwdBtn" style="display:none" onclick="goFwd()">Suivant →</button>
+    <button class="hdr-btn" id="refreshRoleBtn" onclick="refreshMyRole()" title="Actualiser mes droits d'accès" style="display:none">🔄 Mes droits</button>
     <button class="hdr-btn" id="logoutBtn" onclick="logout()">Quitter</button>
   </div>
   <button class="hdr-menu-btn" id="menuHamburger" onclick="toggleMobileMenu()" title="Menu" aria-label="Ouvrir le menu"><span></span><span></span><span></span></button>
@@ -1725,6 +1806,7 @@ input[type=checkbox]{ width:auto;margin-right:6px; }
   <button class="hdr-drawer-btn" id="drawerBackBtn" onclick="goBack();closeMobileMenu()" style="display:none">← Retour</button>
   <button class="hdr-drawer-btn" id="drawerFwdBtn" onclick="goFwd();closeMobileMenu()" style="display:none">Suivant →</button>
   <div class="hdr-drawer-sep"></div>
+  <button class="hdr-drawer-btn" id="drawerRefreshRoleBtn" onclick="refreshMyRole();closeMobileMenu()" style="display:none">🔄 Actualiser mes droits</button>
   <button class="hdr-drawer-btn drawer-danger" id="drawerLogoutBtn" onclick="logout();closeMobileMenu()">Quitter</button>
 </nav>
 
@@ -1733,8 +1815,17 @@ input[type=checkbox]{ width:auto;margin-right:6px; }
   <div class="admin-panel-ttl">👑 Panneau Admin</div>
   <div class="flex g8 fw">
     <button class="btn btn-g btn-sm" id="liveToggleBtn" onclick="toggleLiveOpen()">🔴 Live fermé (spectateurs)</button>
+    <button class="btn btn-b btn-sm" onclick="toggleUsersPanel()">👥 Gérer le staff</button>
     <button class="btn btn-y btn-sm" onclick="resetAllResults()">🔄 Réinitialiser tous les scores</button>
     <button class="btn btn-r btn-sm" onclick="newTournament()">🆕 Nouveau tournoi</button>
+  </div>
+  <div id="usersPanel" style="display:none;margin-top:14px;border-top:1px solid var(--bdr);padding-top:14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <strong style="font-size:13px">👥 Comptes utilisateurs</strong>
+      <button class="btn btn-ghost btn-xs" onclick="loadUsersList()">🔄 Actualiser</button>
+      <span style="font-size:11px;color:var(--muted)">Changez le rôle pour donner l'accès à la saisie des scores (scorer) ou l'accès complet (admin).</span>
+    </div>
+    <div id="usersList" style="max-height:320px;overflow-y:auto"></div>
   </div>
 </div>
 
